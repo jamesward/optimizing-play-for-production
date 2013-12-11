@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en" xmlns="http://www.w3.org/1999/html">
+
+<head>
+    <meta charset="utf-8">
+
+    <title>Optimizing Play for Production</title>
+
+    <meta name="description" content="Play Framework is easy to deploy and scale but like any system some optimizations can help things run more smoothly. This webinar will teach you the basics of deployment, configuring thread pools, managing blocking, and common performance pitfalls.">
+    <meta name="author" content="James Ward">
+
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <link rel="stylesheet" href="css/reveal.min.css">
+    <link rel="stylesheet" href="css/theme/default.css" id="theme">
+
+    <!-- For syntax highlighting -->
+    <link rel="stylesheet" href="lib/css/zenburn.css">
+
+    <!-- If the query includes 'print-pdf', use the PDF print sheet -->
+    <script>
+        document.write( '<link rel="stylesheet" href="css/print/' + ( window.location.search.match( /print-pdf/gi ) ? 'pdf' : 'paper' ) + '.css" type="text/css" media="print">' );
+    </script>
+
+    <!--[if lt IE 9]>
+    <script src="lib/js/html5shiv.js"></script>
+    <![endif]-->
+
+    <style type="text/css">
+    .reveal .controls {
+        bottom: auto;
+        top: 0px;
+    }
+    </style>
+</head>
+<body>
+
+<div class="reveal">
+
+<aside style="display: block; position: fixed; bottom: 5px; left: 10px; z-index: 30;">
+    <a href="http://typesafe.com"><img src="assets/logo.png"></a>
+</aside>
+
+<aside style="display: block; position: fixed; bottom: 10px; right: 10px; z-index: 30;">
+    <a href="http://twitter.com/_JamesWard"  style="font-size: 20px;">@_JamesWard</a>
+</aside>
+
+<div class="slides">
+    
+    <section>
+        <h2>Optimizing Play for Production</h2>
+        <p>
+            <small><a href="http://www.jamesward.com">James Ward</a> ~ <a href="http://twitter.com/_jamesward">@_JamesWard</a></small>
+        </p>
+    </section>
+    
+    <section>
+        <h2>Agenda</h2>
+        
+        <ul>
+            <li>Create, Run, Start, Stage, Dist</li>
+            <li>Performance Pitfalls</li>
+            <li>Troubleshooting Tools</li>
+            <li>Thread Pool Configuration</li>
+            <li>Front-End Servers & Load Balancers</li>
+            <li>Static Assets</li>
+        </ul>
+        
+    </section>
+    
+    <section>
+        <section>
+            <h2>Create with Activator</h2>
+            
+            <img src="assets/all-create.png">
+
+            <pre><code>$ activator new</code></pre>
+        </section>
+        <section>
+            <h2>Run in Dev Mode</h2>
+
+            <h3>Activator UI or CLI</h3>
+            <pre><code>$ activator run</code></pre>
+            <pre><code>$ activator ~run</code></pre>
+        </section>
+        <section>
+            <h2>Start in Prod Mode</h2>
+
+            <h3>Activator CLI</h3>
+            <pre><code>$ activator start</code></pre>
+        </section>
+        <section>
+            <h2>Stage</h2>
+
+            <h3>Activator CLI</h3>
+            <pre><code>$ activator stage</code></pre>
+        </section>
+        <section>
+            <h2>Publish</h2>
+
+            <h3>Activator CLI</h3>
+            <pre><code>$ activator publish-local</code></pre>
+        </section>
+        <section>
+            <h2>Dist</h2>
+
+            <h3>Activator CLI</h3>
+            <pre><code>$ activator dist</code></pre>
+        </section>
+    </section>
+    
+    <section>
+        <section>
+            <h2>Performance Pitfalls</h2>
+            
+            <ul>
+                <li>Web Tier State</li>
+                <li>Unnecessary Serialization</li>
+                <li>Blocking</li>
+                <li>Blocking Badly</li>
+            </ul>
+            
+        </section>
+        <section>
+            <h2>Web Tier State</h2>
+            
+            <ul>
+                <li>Play is stateless by default</li>
+                <li>State lives in cookies</li>
+                <li>Move state to the client or external data stores</li>
+            </ul>
+        </section>
+        <section>
+            <h2>Unnecessary Serialization</h2>
+            <h3><a href="http://www.playframework.com/documentation/2.2.x/ScalaJsonTransformers">JSON Coast to Coast</a></h3>
+            
+            <pre><code>val foo = Json.obj("name" -> "foo")
+val transformer = (__ \ "name").json.put(JsString("bar"))
+val newFoo = foo.transform(transformer)</code></pre>
+        </section>
+        <section>
+            <h2>Blocking</h2>
+            
+            <ul>
+                <li>Threads are a precious resource</li>
+                <li>No more thread per connection</li>
+            </ul>
+            <br/>
+            <img src="assets/no-blocking.png" style="height: 300px; background-color: #ffffff;">
+        </section>
+        <section>
+            <h2>Reactive Requests</h2>
+            <img src="assets/reactive-requests.png">
+        </section>
+        <section data-markdown>
+            <script type="text/template">
+                ### Blocking Request
+
+                    def foo = Action {
+                        Ok("foo")
+                    }
+
+                ### Async Request
+
+                    def foo = Action.async {
+                        Future.successful(Ok("foo"))
+                    }
+            </script>
+        </section>
+        <section data-markdown>
+            <script type="text/template">
+                ### Reactive Request (Async + Non-Blocking)
+
+                    def pause(duration: Int) = Action.async {
+                      Promise.timeout(Ok(duration.toString), duration seconds)
+                    }
+
+                ### Reactive WS Client
+
+                    val f: Future[Response] = WS.url("http://www.foo.com").get
+            </script>
+        </section>
+        <section data-markdown>
+            <script type="text/template">
+                ### Reactive Composition
+
+                    def foo = Action.async {
+                      val futureResponse = WS.url("http://www.foo.com").get
+                      futureResponse.map { response =>
+                        Ok(response.body)
+                      }
+                    }
+            </script>
+        </section>
+        <section data-markdown>
+            <script type="text/template">
+                ### Reactive Composition
+
+                    def foo = Action.async {
+                      val futureJW = WS.url("http://www.jamesward.com").get
+                      val futureTwitter = WS.url("http://www.twitter.com").get
+                      for {
+                        jw <- futureJW
+                        twitter <- futureTwitter
+                      } yield Ok(jw.response.body + twitter.response.body)
+                    }
+            </script>
+        </section>
+        <section>
+            <h2>Non-Blocking is Better</h2>
+            
+            <ul>
+                <li>Play's WS client lib</li>
+                <li>ReactiveMongo</li>
+                <li>Redis, Datomic, etc</li>
+            </ul>
+        </section>
+        <section>
+            <h2>Blocking Badly</h2>
+
+            <ul>
+                <li>Some APIs are only blocking (JDBC, Http Client, etc)</li>
+                <li>Threads can accommodate spikes</li>
+                <li>Push don't Pull (or Poll)</li>
+                <li>Use Actors</li>
+            </ul>
+        </section>
+        <section data-markdown>
+            <script type="text/template">
+                ## Actors: Better Scalability & Resilience
+
+                <img src="assets/akka-actors.png" style="background-color: #ffffff; width: 700px;">
+
+                * Event-Driven
+                * Non-request based lifecycle
+                * Managed Concurrency
+                * Isolated Failure Handling (Supervision)
+            </script>
+        </section>
+        <section>
+            <h2>Watcher Pattern</h2>
+            
+            <ol>
+                <li>Client A - Request for x</li>
+                <li>Fetch x</li>
+                <li>Client B - Request for x</li>
+                <li>Client B - Watch for x</li>
+                <li>Receive x</li>
+                <li>Send x to A & B</li>
+            </ol>
+        </section>
+        <section>
+            <h2>Akka Routers</h2>
+
+            <ul>
+                <li><a href="http://doc.akka.io/docs/akka/2.2.3/scala/routing.html#ScatterGatherFirstCompletedRouter">ScatterGatherFirstCompletedRouter</a></li>
+                <li><a href="http://doc.akka.io/docs/akka/2.2.3/scala/routing.html#SmallestMailboxRouter">SmallestMailboxRouter</a></li>
+                <li><a href="http://doc.akka.io/docs/akka/2.2.3/scala/routing.html#RoundRobinRouter">RoundRobinRouter</a></li>
+                <li><a href="http://doc.akka.io/docs/akka/2.2.3/scala/routing.html#RandomRouter">RandomRouter</a></li>
+            </ul>
+        </section>
+        
+    </section>
+    
+    <section>
+        <h2>Troubleshooting Tools</h2>
+        
+        <ul>
+            <li>Typesafe Console</li>
+            <li>App Dynamics & New Relic</li>
+            <li>jps, jstat, VisualVM, etc</li>
+            <li>jClarity</li>
+            <li>Gatling, etc</li>
+        </ul>
+    </section>
+
+    <section>
+        <section>
+            <h2>Thread Pool & JVM Configuration</h2>
+
+            <ul>
+                <li>Lots of knobs to turn</li>
+                <li><a href="http://www.playframework.com/documentation/2.2.x/ThreadPools">Play's thread pools</a> are tuned for non-blocking</li>
+            </ul>
+        </section>
+        <section>
+            <h2>Play's Thread Pools</h2>
+
+            <ul>
+                <li>Netty boss/worker thread pools</li>
+                <li>Iteratee thread pool</li>
+                <li>Play Internal Thread Pool</li>
+                <li>Play default thread pool</li>
+                <li>Akka thread pool</li>
+            </ul>
+        </section>
+        <section>
+            <h2>Block More with More Threads</h2>
+            
+            <pre><code>play {
+    akka {
+        akka.loggers = ["akka.event.Logging$DefaultLogger", "akka.event.slf4j.Slf4jLogger"]
+        loglevel = WARNING
+        actor {
+            default-dispatcher = {
+                fork-join-executor {
+                    parallelism-factor = 1.0
+                    parallelism-max = 300
+                }
+            }
+        }
+    }
+}</code></pre>
+        </section>
+
+    </section>
+
+    <section>
+        <h2>Front-End Servers & Load Balancers</h2>
+
+        <ul>
+            <li>Port Forwarding: IPTables</li>
+            <li>Proxies: Apache, nginx, etc</li>
+            <li>Load Balancers & Auto-Scaling: ELBs</li>
+        </ul>
+    </section>
+    
+    <section>
+        <section>
+            <h2>Static Assets</h2>
+
+            <ul>
+                <li>Play is optimized for caching proxies</li>
+                <li>304 - Not Modified</li>
+                <li>Asset Fingerprinting</li>
+            </ul>
+        </section>
+        <section>
+            <h2>CDNs & Caching Proxies</h2>
+            
+            <pre><code>def getUrl(file: String) = {
+  Play.configuration.getString("contenturl") match {
+    case Some(contentUrl) => contentUrl + routes.RemoteAssets.getAsset(file).url
+    case None => controllers.routes.RemoteAssets.getAsset(file)
+  }
+}</code></pre>
+            
+            <small>Reverse Router Wrapped</small>
+            <pre><code>&lt;script src='@RemoteAssets.getUrl("jquery.min.js")'&gt;&lt;/script&gt;</code></pre>
+        </section>
+        <section>
+            <h2>Last Modified & ETag</h2>
+
+            <ul>
+                <li>Out of the box</li>
+                <li>Still hits the server</li>
+            </ul>
+        </section>
+        <section>
+            <h2>Asset Fingerprinting</h2>
+            
+            <small>The hacky way:</small>
+            <pre><code>object StaticAssets extends Controller {
+  val versionStamp: String = new Date().getTime.toString + "/"
+
+  def at(file: String) = CustomNotFound {
+    val actualFile = file.replaceAll(versionStamp, "")
+    Assets.at("/public", actualFile)
+  }
+
+  def getUrl(file: String) = {
+    val versionedFile = versionStamp + file
+    controllers.routes.StaticAssets.at(versionedFile)
+  }
+}</code></pre>
+        </section>
+        <section>
+            <h2>Far Future Expires</h2>
+            
+            <ul>
+                <li>Requires fingerprinting</li>
+            </ul>
+            
+            <pre><code>result.withHeaders("Cache-Control" -> "max-age=290304000, public")</code></pre>
+        </section>
+    </section>
+
+    <section>
+        <h2>Reactive Scales!</h2>
+    </section>
+    
+</div>
+</div>
+
+<script src="lib/js/head.min.js"></script>
+<script src="js/reveal.min.js"></script>
+
+<script>
+
+    // Full list of configuration options available here:
+    // https://github.com/hakimel/reveal.js#configuration
+    Reveal.initialize({
+        controls: true,
+        progress: true,
+        history: true,
+        center: false,
+        rollingLinks: false,
+        theme: Reveal.getQueryHash().theme, // available themes are in /css/theme
+        transition: Reveal.getQueryHash().transition || 'default', // default/cube/page/concave/zoom/linear/fade/none
+        // Optional libraries used to extend on reveal.js
+        dependencies: [
+            { src: 'lib/js/classList.js', condition: function() { return !document.body.classList; } },
+            { src: 'plugin/markdown/showdown.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+            { src: 'plugin/markdown/markdown.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+            { src: 'plugin/highlight/highlight.js', async: true, callback: function() { hljs.initHighlightingOnLoad(); } },
+            { src: 'plugin/zoom-js/zoom.js', async: true, condition: function() { return !!document.body.classList; } },
+            { src: 'plugin/notes/notes.js', async: true, condition: function() { return !!document.body.classList; } }
+            // { src: 'plugin/remotes/remotes.js', async: true, condition: function() { return !!document.body.classList; } }
+        ]
+    });
+
+</script>
+
+</body>
+</html>
